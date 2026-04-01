@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 
 var options = ParseArgs(args);
 
@@ -14,39 +13,55 @@ ConfigurePort(options.PortName, options.BaudRate);
 
 if (options.Activate)
 {
-    ActivateMetis(options.PortName, options.ActivationMode);
+    ActivateMetisPlug(options.PortName, options.BaudRate);
 }
 
-var listenBaudRate = options.BaudRate;
-ConfigurePort(options.PortName, listenBaudRate);
-using var serialStream = new FileStream(
-    options.PortName,
-    FileMode.Open,
-    FileAccess.ReadWrite,
-    FileShare.ReadWrite,
-    bufferSize: 4096);
+if (args.Contains("--dump-params"))
+{
+    DumpAllParameters(options.PortName, options.BaudRate);
+    return;
+}
 
-Console.WriteLine("Listening for raw bytes. Press Ctrl+C to stop.");
+ConfigurePort(options.PortName, options.BaudRate);
+using var serialStream = OpenStream(options.PortName);
 
-var buffer = new byte[4096];
-var receiveBuffer = new List<byte>(8192);
+// Check if RSSI is enabled (CMD_GET_REQ param=0x45, len=0x01)
+var rssiEnabled = false;
+var checkBuffer = new List<byte>(256);
+try
+{
+    var response = SendCommandAndGet(serialStream, checkBuffer, "CMD_GET_REQ RSSI_ENABLE",
+        BuildFrame(0x0A, [0x45, 0x01]), 0x8A);
+    // Response payload: param(0x45) + len(0x01) + value
+    rssiEnabled = response.Payload.Length >= 3 && response.Payload[2] == 0x01;
+    Console.WriteLine($"RSSI_ENABLE = {rssiEnabled}");
+}
+catch (TimeoutException)
+{
+    Console.WriteLine("Could not read RSSI_ENABLE, assuming disabled");
+}
+
+Console.WriteLine("Listening for WMBus telegrams. Press Ctrl+C to stop.");
+
+var chunkBuffer = new byte[4096];
+var metisBuffer = new List<byte>(8192);
 
 while (true)
 {
     try
     {
-        var bytesRead = serialStream.Read(buffer, 0, buffer.Length);
+        var bytesRead = serialStream.Read(chunkBuffer, 0, chunkBuffer.Length);
         if (bytesRead <= 0)
         {
             Thread.Sleep(25);
             continue;
         }
 
-        var payload = buffer.AsSpan(0, bytesRead);
+        var chunk = chunkBuffer.AsSpan(0, bytesRead);
         var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
-        Console.WriteLine($"[{timestamp}] PAYLOAD: {ToHex(payload)}");
-        receiveBuffer.AddRange(payload.ToArray());
-        DumpIncomingMessages(receiveBuffer);
+        Console.WriteLine($"[{timestamp}] PAYLOAD: {ToHex(chunk)}");
+        metisBuffer.AddRange(chunk.ToArray());
+        DumpParsedFrames(metisBuffer, rssiEnabled);
     }
     catch (IOException)
     {
@@ -56,13 +71,9 @@ while (true)
 
 static Options ParseArgs(string[] args)
 {
-    const string defaultPortName = "/dev/tty.usbserial-53002FA7";
-    const int defaultBaudRate = 115200;
-
-    var portName = defaultPortName;
-    var baudRate = defaultBaudRate;
+    var portName = "/dev/cu.usbserial-53002FA7";
+    var baudRate = 9600;
     var activate = false;
-    var activationMode = ActivationMode.T2Other;
 
     for (var i = 0; i < args.Length; i++)
     {
@@ -78,28 +89,90 @@ static Options ParseArgs(string[] args)
             case "--activate":
                 activate = true;
                 break;
-            case "--mode" when i + 1 < args.Length:
-                activationMode = ParseActivationMode(args[++i]);
-                break;
             case "--help":
             case "-h":
-                Console.WriteLine("Usage: dotnet run -- [--port /dev/tty.usbserial-53002FA7] [--baud 9600] [--activate] [--mode t2]");
+                Console.WriteLine("Usage: dotnet run -- [--port /dev/cu.usbserial-53002FA7] [--baud 9600] [--activate]");
                 Environment.Exit(0);
                 break;
         }
     }
 
-    return new Options(portName, baudRate, activate, activationMode);
+    return new Options(portName, baudRate, activate);
 }
 
-static string ToHex(ReadOnlySpan<byte> buffer)
+static void DumpAllParameters(string portName, int baudRate)
 {
-    return Convert.ToHexString(buffer.ToArray());
+    Console.WriteLine("Reading parameters 0x00..0x50");
+    ConfigurePort(portName, baudRate);
+    using var stream = OpenStream(portName);
+    var buf = new List<byte>(256);
+
+    for (byte param = 0x00; param <= 0x50; param++)
+    {
+        try
+        {
+            var response = SendCommandAndGet(stream, buf, $"GET 0x{param:X2}",
+                BuildFrame(0x0A, [param, 0x01]), 0x8A, timeoutMs: 500);
+
+            // Payload: param + len + value(s)
+            if (response.Payload.Length >= 2)
+            {
+                var pLen = response.Payload[1];
+                var values = response.Payload.AsSpan(2);
+                var dec = string.Join(", ", values.ToArray().Select(v => v.ToString()));
+                Console.WriteLine($"  [0x{param:X2}] len={pLen} hex={ToHex(values)} dec={dec}");
+            }
+            else
+            {
+                Console.WriteLine($"  [0x{param:X2}] raw={ToHex(response.Payload)}");
+            }
+        }
+        catch (TimeoutException)
+        {
+            Console.WriteLine($"  [0x{param:X2}] (no response)");
+        }
+        catch (IOException ex)
+        {
+            Console.WriteLine($"  [0x{param:X2}] ERROR: {ex.Message}");
+        }
+    }
+}
+
+static void ActivateMetisPlug(string portName, int baudRate)
+{
+    Console.WriteLine("Activating Metis-II Plug with minimal collector setup");
+
+    ConfigurePort(portName, baudRate);
+    using var serialStream = OpenStream(portName);
+    var receiveBuffer = new List<byte>(1024);
+
+    // Metis-II Plug collector setup from the Plug/module manuals:
+    // enable UART command output, enable RSSI, store Mode_Preselect=C1_meter,
+    // reset to apply, then switch runtime mode to C2_T2_other.
+    SendCommandAndWait(serialStream, receiveBuffer, "CMD_SET_REQ UART_CMD_OUT_ENABLE=1", BuildFrame(0x09, [0x05, 0x01, 0x01]), 0x89);
+    SendCommandAndWait(serialStream, receiveBuffer, "CMD_SET_REQ RSSI_ENABLE=1", BuildFrame(0x09, [0x45, 0x01, 0x01]), 0x89);
+    SendCommandAndWait(serialStream, receiveBuffer, "CMD_SET_REQ MODE_PRESELECT=C2_T2_other", BuildFrame(0x09, [0x46, 0x01, 0x09]), 0x89);
+    SendCommandAndPause(serialStream, receiveBuffer, "CMD_RESET_REQ", BuildFrame(0x05, []), 1200);
+
+    ConfigurePort(portName, baudRate);
+    using var runtimeStream = OpenStream(portName);
+    var runtimeBuffer = new List<byte>(1024);
+    SendCommandAndWait(runtimeStream, runtimeBuffer, "CMD_SET_MODE_REQ C2_T2_other", BuildFrame(0x04, [0x09]), 0x84);
+}
+
+static FileStream OpenStream(string portName)
+{
+    return new FileStream(
+        portName,
+        FileMode.Open,
+        FileAccess.ReadWrite,
+        FileShare.ReadWrite,
+        bufferSize: 4096);
 }
 
 static void ConfigurePort(string portName, int baudRate)
 {
-    var arguments = $"-f {portName} {baudRate} cs8 -cstopb -parenb -crtscts raw -ixon -ixoff min 0 time 1";
+    var arguments = $"-f {portName} {baudRate} cs8 -cstopb -parenb raw -ixon -ixoff min 0 time 1";
     using var process = new Process
     {
         StartInfo = new ProcessStartInfo
@@ -121,82 +194,49 @@ static void ConfigurePort(string portName, int baudRate)
     }
 
     var error = process.StandardError.ReadToEnd().Trim();
-    if (string.IsNullOrWhiteSpace(error))
-    {
-        error = "Unknown stty error";
-    }
-
     throw new IOException($"Failed to configure serial port {portName}: {error}");
 }
 
-static void ActivateMetis(string portName, ActivationMode mode)
+static byte[] BuildFrame(byte command, byte[] payload)
 {
-    Console.WriteLine("Activating Metis-II using minimal receiver setup");
+    var frame = new byte[payload.Length + 4];
+    frame[0] = 0xFF;
+    frame[1] = command;
+    frame[2] = (byte)payload.Length;
+    Array.Copy(payload, 0, frame, 3, payload.Length);
 
-    ConfigurePort(portName, 115200);
-    using var serialStream = new FileStream(
-        portName,
-        FileMode.Open,
-        FileAccess.ReadWrite,
-        FileShare.ReadWrite,
-        bufferSize: 4096);
-    var receiveBuffer = new List<byte>(1024);
+    byte checksum = 0x00;
+    for (var i = 0; i < frame.Length - 1; i++)
+    {
+        checksum ^= frame[i];
+    }
 
-    SendCommandAndWait(serialStream, receiveBuffer, "CMD_SET_REQ UART_CMD_OUT_ENABLE=1", "FF0903050101F0", expectedCommand: 0x89);
-    SendCommandAndWait(serialStream, receiveBuffer, "CMD_SET_REQ RSSI_Enable=1", "FF0903450101B0", expectedCommand: 0x89);
-    SendCommandAndWait(
-        serialStream,
-        receiveBuffer,
-        $"CMD_SET_REQ Mode_Preselect={mode}",
-        GetSetModePreselectCommandHex(mode),
-        expectedCommand: 0x89);
-    SendCommandAndPause(serialStream, receiveBuffer, "CMD_RESET_REQ", "FF0500FA", pauseMs: 1000);
-
-    serialStream.Flush();
-    Console.WriteLine("Keeping host UART at 115200 baud after activation");
-
-    ConfigurePort(portName, 115200);
-    using var runtimeStream = new FileStream(
-        portName,
-        FileMode.Open,
-        FileAccess.ReadWrite,
-        FileShare.ReadWrite,
-        bufferSize: 4096);
-    var runtimeReceiveBuffer = new List<byte>(1024);
-
-    SendCommandAndWait(
-        runtimeStream,
-        runtimeReceiveBuffer,
-        $"CMD_SET_MODE_REQ {mode}",
-        GetSetModeCommandHex(mode),
-        expectedCommand: 0x84);
-    runtimeStream.Flush();
+    frame[^1] = checksum;
+    return frame;
 }
 
 static void SendCommandAndWait(
     FileStream serialStream,
     List<byte> receiveBuffer,
     string label,
-    string hexPayload,
+    byte[] command,
     byte expectedCommand,
-    int timeoutMs = 3000,
-    int maxAttempts = 5)
+    int timeoutMs = 1500,
+    int attempts = 5)
 {
-    var bytes = Convert.FromHexString(hexPayload);
     Exception? lastError = null;
 
-    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+    for (var attempt = 1; attempt <= attempts; attempt++)
     {
-        Console.WriteLine($"TX {label} attempt {attempt}/{maxAttempts}: {hexPayload}");
-        serialStream.Write(bytes, 0, bytes.Length);
+        Console.WriteLine($"TX {label} attempt {attempt}/{attempts}: {ToHex(command)}");
+        serialStream.Write(command, 0, command.Length);
         serialStream.Flush();
 
         try
         {
-            var response = WaitForMetisFrame(serialStream, receiveBuffer, expectedCommand, timeoutMs);
+            var response = WaitForFrame(serialStream, receiveBuffer, expectedCommand, timeoutMs);
             var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
-            Console.WriteLine($"[{timestamp}] RX CMD=0x{response.Command:X2} HEX={ToHex(response.RawFrame)}");
-
+            Console.WriteLine($"[{timestamp}] METIS CMD=0x{response.Command:X2} HEX={ToHex(response.RawFrame)}");
             if (response.Payload.Length > 0 && response.Payload[0] != 0x00)
             {
                 throw new IOException($"{label} failed with status 0x{response.Payload[0]:X2}");
@@ -205,183 +245,187 @@ static void SendCommandAndWait(
             Thread.Sleep(80);
             return;
         }
-        catch (TimeoutException ex)
+        catch (Exception ex) when (ex is TimeoutException or IOException)
         {
             lastError = ex;
-            var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
-            Console.WriteLine($"[{timestamp}] Timeout waiting for CNF 0x{expectedCommand:X2} after {label}");
-            DrainIncoming(serialStream, receiveBuffer, 250);
+            DrainDuringPause(serialStream, receiveBuffer, 250);
             Thread.Sleep(120);
         }
     }
 
-    throw lastError ?? new TimeoutException($"Timed out waiting for Metis response 0x{expectedCommand:X2}");
+    throw lastError ?? new TimeoutException($"Timed out waiting for 0x{expectedCommand:X2}");
+}
+
+static MetisFrame SendCommandAndGet(
+    FileStream serialStream,
+    List<byte> receiveBuffer,
+    string label,
+    byte[] command,
+    byte expectedCommand,
+    int timeoutMs = 1500)
+{
+    Console.WriteLine($"TX {label}: {ToHex(command)}");
+    serialStream.Write(command, 0, command.Length);
+    serialStream.Flush();
+    return WaitForFrame(serialStream, receiveBuffer, expectedCommand, timeoutMs);
 }
 
 static void SendCommandAndPause(
     FileStream serialStream,
     List<byte> receiveBuffer,
     string label,
-    string hexPayload,
+    byte[] command,
     int pauseMs)
 {
-    var bytes = Convert.FromHexString(hexPayload);
-    Console.WriteLine($"TX {label}: {hexPayload}");
-    serialStream.Write(bytes, 0, bytes.Length);
+    Console.WriteLine($"TX {label}: {ToHex(command)}");
+    serialStream.Write(command, 0, command.Length);
     serialStream.Flush();
-
-    DrainIncoming(serialStream, receiveBuffer, pauseMs);
-    Thread.Sleep(80);
+    DrainDuringPause(serialStream, receiveBuffer, pauseMs);
 }
 
-static MetisFrame WaitForMetisFrame(
-    FileStream serialStream,
-    List<byte> receiveBuffer,
-    byte expectedCommand,
-    int timeoutMs)
+static MetisFrame WaitForFrame(FileStream serialStream, List<byte> receiveBuffer, byte expectedCommand, int timeoutMs)
 {
-    var buffer = new byte[512];
     var startedAt = Environment.TickCount64;
+    var buffer = new byte[512];
 
     while (Environment.TickCount64 - startedAt < timeoutMs)
     {
         var bytesRead = serialStream.Read(buffer, 0, buffer.Length);
-        if (bytesRead > 0)
-        {
-            var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
-            var rawBytes = buffer.AsSpan(0, bytesRead);
-            Console.WriteLine($"[{timestamp}] PAYLOAD: {ToHex(rawBytes)}");
-            receiveBuffer.AddRange(rawBytes.ToArray());
-
-            while (TryExtractMetisFrame(receiveBuffer, out var frame))
-            {
-                Console.WriteLine($"[{timestamp}] METIS CMD=0x{frame.Command:X2} LEN={frame.Length} HEX={ToHex(frame.RawFrame)}");
-                if (frame.Command == expectedCommand)
-                {
-                    return frame;
-                }
-            }
-        }
-        else
+        if (bytesRead <= 0)
         {
             Thread.Sleep(25);
+            continue;
+        }
+
+        var chunk = buffer.AsSpan(0, bytesRead);
+        var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
+        Console.WriteLine($"[{timestamp}] PAYLOAD: {ToHex(chunk)}");
+        receiveBuffer.AddRange(chunk.ToArray());
+
+        while (TryExtractMetisFrame(receiveBuffer, out var frame))
+        {
+            Console.WriteLine($"[{timestamp}] METIS CMD=0x{frame.Command:X2} LEN={frame.Payload.Length} HEX={ToHex(frame.RawFrame)}");
+            if (frame.Command == expectedCommand)
+            {
+                return frame;
+            }
         }
     }
 
-    throw new TimeoutException($"Timed out waiting for Metis response 0x{expectedCommand:X2}");
+    throw new TimeoutException($"Timed out waiting for 0x{expectedCommand:X2}");
 }
 
-static void DrainIncoming(FileStream serialStream, List<byte> receiveBuffer, int durationMs)
+static void DrainDuringPause(FileStream serialStream, List<byte> receiveBuffer, int durationMs)
 {
-    var buffer = new byte[512];
     var startedAt = Environment.TickCount64;
+    var buffer = new byte[512];
 
     while (Environment.TickCount64 - startedAt < durationMs)
     {
         var bytesRead = serialStream.Read(buffer, 0, buffer.Length);
-        if (bytesRead > 0)
-        {
-            var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
-            var payload = buffer.AsSpan(0, bytesRead);
-            Console.WriteLine($"[{timestamp}] PAYLOAD: {ToHex(payload)}");
-            receiveBuffer.AddRange(payload.ToArray());
-
-            while (TryExtractMetisFrame(receiveBuffer, out var frame))
-            {
-                Console.WriteLine($"[{timestamp}] METIS CMD=0x{frame.Command:X2} LEN={frame.Length} HEX={ToHex(frame.RawFrame)}");
-            }
-        }
-        else
+        if (bytesRead <= 0)
         {
             Thread.Sleep(25);
+            continue;
+        }
+
+        var chunk = buffer.AsSpan(0, bytesRead);
+        var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
+        Console.WriteLine($"[{timestamp}] PAYLOAD: {ToHex(chunk)}");
+        receiveBuffer.AddRange(chunk.ToArray());
+
+        while (TryExtractMetisFrame(receiveBuffer, out var frame))
+        {
+            Console.WriteLine($"[{timestamp}] METIS CMD=0x{frame.Command:X2} LEN={frame.Payload.Length} HEX={ToHex(frame.RawFrame)}");
         }
     }
 }
 
-static ActivationMode ParseActivationMode(string value)
+static void DumpParsedFrames(List<byte> receiveBuffer, bool rssiEnabled)
 {
-    return value.ToLowerInvariant() switch
-    {
-        "t2" => ActivationMode.T2Other,
-        "t2other" => ActivationMode.T2Other,
-        "c2t2" => ActivationMode.C2T2Other,
-        "t1" => ActivationMode.C2T2Other,
-        "t1meter" => ActivationMode.C2T2Other,
-        "c1" => ActivationMode.C2T2Other,
-        "s2" => ActivationMode.S2,
-        _ => throw new ArgumentException($"Unsupported mode '{value}'. Use 't2', 'c2t2' or 's2'.")
-    };
-}
-
-static string GetSetModeCommandHex(ActivationMode mode)
-{
-    return mode switch
-    {
-        ActivationMode.T2Other => "FF040108F2",
-        ActivationMode.C2T2Other => "FF040109F3",
-        ActivationMode.S2 => "FF040103F9",
-        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, null)
-    };
-}
-
-static string GetSetModePreselectCommandHex(ActivationMode mode)
-{
-    return mode switch
-    {
-        ActivationMode.T2Other => "FF0903460108BA",
-        ActivationMode.C2T2Other => "FF0903460109BB",
-        ActivationMode.S2 => "FF0903460103B1",
-        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, null)
-    };
-}
-
-static void DumpIncomingMessages(List<byte> receiveBuffer)
-{
-    while (TryExtractMetisFrame(receiveBuffer, out var metisFrame))
+    while (TryExtractMetisFrame(receiveBuffer, out var frame))
     {
         var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
-        switch (metisFrame.Command)
+
+        if (frame.Command == 0x03)
         {
-            case 0x03:
-                DumpDataIndication(timestamp, metisFrame);
-                break;
-            case 0x80:
-            case 0x84:
-            case 0x89:
-            case 0x90:
-            case 0x91:
-                break;
-            default:
-                Console.WriteLine($"[{timestamp}] METIS CMD=0x{metisFrame.Command:X2} LEN={metisFrame.Payload.Length} HEX={ToHex(metisFrame.RawFrame)}");
-                break;
+            PrintWMBusTelegram(timestamp, frame, rssiEnabled);
+            continue;
         }
+
+        Console.WriteLine($"[{timestamp}] METIS CMD=0x{frame.Command:X2} LEN={frame.Payload.Length} HEX={ToHex(frame.RawFrame)}");
     }
 }
 
-static void DumpDataIndication(string timestamp, MetisFrame metisFrame)
+static void PrintWMBusTelegram(string timestamp, MetisFrame frame, bool rssiEnabled)
 {
-    if (!TryExtractWmbusFrame(metisFrame, out var frame, out var rssi))
+    var payload = frame.Payload;
+
+    if (payload.Length < 11)
     {
-        Console.WriteLine($"[{timestamp}] CMD_DATA_IND malformed LEN={metisFrame.Length} HEX={ToHex(metisFrame.RawFrame)}");
-        Console.WriteLine($"PAYLOAD: {ToHex(metisFrame.Payload)}");
-        Console.WriteLine();
+        Console.WriteLine($"[{timestamp}] CMD_DATA_IND ({payload.Length}B): {ToHex(payload)}");
         return;
     }
 
-    Console.WriteLine($"[{timestamp}] WMBus frame {frame.Length} bytes{(rssi is null ? string.Empty : $" RSSI=0x{rssi.Value:X2}")}");
-    Console.WriteLine($"PAYLOAD: {ToHex(frame)}");
+    int? rssiDbm = null;
+    ReadOnlySpan<byte> wmbus;
 
-    if (TryParseLinkLayerHeader(frame, out var header))
+    if (rssiEnabled && payload.Length >= 12)
     {
-        Console.WriteLine(
-            $"HEADER Mfr={header.Manufacturer} ({header.ManufacturerCode:X4}) UniqueId={header.UniqueId} Version=0x{header.Version:X2} DeviceType=0x{header.DeviceType:X2} C=0x{header.Control:X2}");
+        var rssi = payload[^1];
+        rssiDbm = rssi >= 128 ? (rssi - 256) / 2 - 74 : rssi / 2 - 74;
+        wmbus = payload.AsSpan(0, payload.Length - 1);
     }
     else
     {
-        Console.WriteLine("HEADER Unable to decode standard WMBus link-layer header");
+        wmbus = payload.AsSpan();
     }
 
+    // WMBus link-layer: L C M M ID ID ID ID Ver DevType [CI ...]
+    // wmbus[0] = L-field (length of remaining bytes after L-field)
+    var lField = wmbus[0];
+    var cField = wmbus[1];
+    var mfr = (ushort)(wmbus[2] | (wmbus[3] << 8));
+    var mfrStr = DecodeMfr(mfr);
+    var id = DecodeBcd(wmbus.Slice(4, 4));
+    var version = wmbus[8];
+    var deviceType = wmbus[9];
+
+    var rssiStr = rssiDbm.HasValue ? $" RSSI={rssiDbm}dBm" : "";
+    Console.WriteLine($"[{timestamp}] WMBus L={lField} C=0x{cField:X2} Mfr={mfrStr ?? "???"} Id={id ?? "????????"} Ver=0x{version:X2} Dev=0x{deviceType:X2}{rssiStr}");
+
+    if (wmbus.Length > 10)
+    {
+        var ciField = wmbus[10];
+        Console.WriteLine($"  CI=0x{ciField:X2} AppData({wmbus.Length - 11}B): {ToHex(wmbus[11..].ToArray())}");
+    }
+
+    Console.WriteLine($"  RAW({wmbus.Length}B): {ToHex(wmbus.ToArray())}");
     Console.WriteLine();
+}
+
+static string? DecodeMfr(ushort code)
+{
+    var a = (char)(((code >> 10) & 0x1F) + 64);
+    var b = (char)(((code >> 5) & 0x1F) + 64);
+    var c = (char)((code & 0x1F) + 64);
+    return a is >= 'A' and <= 'Z' && b is >= 'A' and <= 'Z' && c is >= 'A' and <= 'Z'
+        ? $"{a}{b}{c}" : null;
+}
+
+static string? DecodeBcd(ReadOnlySpan<byte> bcd)
+{
+    Span<char> chars = stackalloc char[bcd.Length * 2];
+    var idx = 0;
+    for (var i = bcd.Length - 1; i >= 0; i--)
+    {
+        var hi = (bcd[i] >> 4) & 0x0F;
+        var lo = bcd[i] & 0x0F;
+        if (hi > 9 || lo > 9) return null;
+        chars[idx++] = (char)('0' + hi);
+        chars[idx++] = (char)('0' + lo);
+    }
+    return new string(chars);
 }
 
 static bool TryExtractMetisFrame(List<byte> receiveBuffer, out MetisFrame frame)
@@ -411,169 +455,28 @@ static bool TryExtractMetisFrame(List<byte> receiveBuffer, out MetisFrame frame)
         var rawFrame = receiveBuffer.GetRange(0, totalLength).ToArray();
         receiveBuffer.RemoveRange(0, totalLength);
 
-        if (!HasValidChecksum(rawFrame))
+        byte checksum = 0x00;
+        for (var i = 0; i < rawFrame.Length - 1; i++)
+        {
+            checksum ^= rawFrame[i];
+        }
+
+        if (checksum != rawFrame[^1])
         {
             continue;
         }
 
-        frame = new MetisFrame(
-            rawFrame[1],
-            payloadLength,
-            rawFrame.AsSpan(3, payloadLength).ToArray(),
-            rawFrame);
+        frame = new MetisFrame(rawFrame[1], rawFrame.AsSpan(3, payloadLength).ToArray(), rawFrame);
         return true;
     }
 
     return false;
 }
 
-static bool HasValidChecksum(ReadOnlySpan<byte> frame)
+static string ToHex(ReadOnlySpan<byte> data)
 {
-    if (frame.Length < 4)
-    {
-        return false;
-    }
-
-    byte checksum = 0x00;
-    for (var i = 0; i < frame.Length - 1; i++)
-    {
-        checksum ^= frame[i];
-    }
-
-    return checksum == frame[^1];
+    return Convert.ToHexString(data.ToArray());
 }
 
-static bool TryExtractWmbusFrame(MetisFrame metisFrame, out byte[] frame, out byte? rssi)
-{
-    frame = Array.Empty<byte>();
-    rssi = null;
-
-    if (metisFrame.Length < 9 || metisFrame.Payload.Length != metisFrame.Length)
-    {
-        return false;
-    }
-
-    if (TryBuildWmbusFrame(metisFrame, hasRssi: true, out frame, out rssi) && TryParseLinkLayerHeader(frame, out _))
-    {
-        return true;
-    }
-
-    if (TryBuildWmbusFrame(metisFrame, hasRssi: false, out frame, out rssi))
-    {
-        return true;
-    }
-
-    return false;
-}
-
-static bool TryBuildWmbusFrame(MetisFrame metisFrame, bool hasRssi, out byte[] frame, out byte? rssi)
-{
-    frame = Array.Empty<byte>();
-    rssi = null;
-
-    if (hasRssi)
-    {
-        if (metisFrame.Length < 10)
-        {
-            return false;
-        }
-
-        var wmbusLength = metisFrame.Length - 1;
-        frame = PrefixByte((byte)wmbusLength, metisFrame.Payload.AsSpan(0, wmbusLength));
-        rssi = metisFrame.Payload[^1];
-        return true;
-    }
-
-    frame = PrefixByte((byte)metisFrame.Length, metisFrame.Payload);
-    return true;
-}
-
-static byte[] PrefixByte(byte prefix, ReadOnlySpan<byte> data)
-{
-    var result = new byte[data.Length + 1];
-    result[0] = prefix;
-    data.CopyTo(result.AsSpan(1));
-    return result;
-}
-
-static bool TryParseLinkLayerHeader(ReadOnlySpan<byte> frame, out LinkLayerHeader header)
-{
-    header = default;
-
-    if (frame.Length < 11)
-    {
-        return false;
-    }
-
-    var manufacturerCode = (ushort)(frame[3] | (frame[4] << 8));
-    var manufacturer = DecodeManufacturer(manufacturerCode);
-    var uniqueId = DecodeBcdId(frame.Slice(5, 4));
-
-    if (manufacturer is null || uniqueId is null)
-    {
-        return false;
-    }
-
-    header = new LinkLayerHeader(
-        frame[2],
-        manufacturerCode,
-        manufacturer,
-        uniqueId,
-        frame[9],
-        frame[10]);
-
-    return true;
-}
-
-static string? DecodeManufacturer(ushort manufacturerCode)
-{
-    var first = (char)(((manufacturerCode >> 10) & 0x1F) + 64);
-    var second = (char)(((manufacturerCode >> 5) & 0x1F) + 64);
-    var third = (char)((manufacturerCode & 0x1F) + 64);
-
-    return IsUppercaseLetter(first) && IsUppercaseLetter(second) && IsUppercaseLetter(third)
-        ? new string([first, second, third])
-        : null;
-}
-
-static bool IsUppercaseLetter(char value)
-{
-    return value is >= 'A' and <= 'Z';
-}
-
-static string? DecodeBcdId(ReadOnlySpan<byte> packedBcd)
-{
-    Span<char> chars = stackalloc char[packedBcd.Length * 2];
-    var index = 0;
-
-    for (var i = packedBcd.Length - 1; i >= 0; i--)
-    {
-        var high = (packedBcd[i] >> 4) & 0x0F;
-        var low = packedBcd[i] & 0x0F;
-        if (high > 9 || low > 9)
-        {
-            return null;
-        }
-
-        chars[index++] = (char)('0' + high);
-        chars[index++] = (char)('0' + low);
-    }
-
-    return new string(chars);
-}
-
-internal sealed record Options(string PortName, int BaudRate, bool Activate, ActivationMode ActivationMode);
-internal enum ActivationMode
-{
-    S2,
-    T2Other,
-    C2T2Other
-}
-internal readonly record struct MetisFrame(byte Command, int Length, byte[] Payload, byte[] RawFrame);
-internal readonly record struct LinkLayerHeader(
-    byte Control,
-    ushort ManufacturerCode,
-    string Manufacturer,
-    string UniqueId,
-    byte Version,
-    byte DeviceType);
+internal sealed record Options(string PortName, int BaudRate, bool Activate);
+internal readonly record struct MetisFrame(byte Command, byte[] Payload, byte[] RawFrame);
