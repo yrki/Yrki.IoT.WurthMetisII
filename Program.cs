@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using MQTTnet;
 
 var options = ParseArgs(args);
 
@@ -41,6 +42,23 @@ catch (TimeoutException)
     Console.WriteLine("Could not read RSSI_ENABLE, assuming disabled");
 }
 
+// Connect MQTT
+var mqttClient = new MqttClientFactory().CreateMqttClient();
+var mqttOptions = new MqttClientOptionsBuilder()
+    .WithTcpServer("localhost", 1883)
+    .Build();
+
+try
+{
+    await mqttClient.ConnectAsync(mqttOptions);
+    Console.WriteLine("MQTT connected to localhost:1883");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"MQTT connection failed: {ex.Message}");
+    Console.WriteLine("Continuing without MQTT");
+}
+
 Console.WriteLine("Listening for WMBus telegrams. Press Ctrl+C to stop.");
 
 var chunkBuffer = new byte[4096];
@@ -61,7 +79,7 @@ while (true)
         var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
         Console.WriteLine($"[{timestamp}] PAYLOAD: {ToHex(chunk)}");
         metisBuffer.AddRange(chunk.ToArray());
-        DumpParsedFrames(metisBuffer, rssiEnabled);
+        await DumpParsedFramesAsync(metisBuffer, rssiEnabled, mqttClient);
     }
     catch (IOException)
     {
@@ -341,7 +359,7 @@ static void DrainDuringPause(FileStream serialStream, List<byte> receiveBuffer, 
     }
 }
 
-static void DumpParsedFrames(List<byte> receiveBuffer, bool rssiEnabled)
+static async Task DumpParsedFramesAsync(List<byte> receiveBuffer, bool rssiEnabled, IMqttClient mqttClient)
 {
     while (TryExtractMetisFrame(receiveBuffer, out var frame))
     {
@@ -349,7 +367,7 @@ static void DumpParsedFrames(List<byte> receiveBuffer, bool rssiEnabled)
 
         if (frame.Command == 0x03)
         {
-            PrintWMBusTelegram(timestamp, frame, rssiEnabled);
+            await PrintWMBusTelegramAsync(timestamp, frame, rssiEnabled, mqttClient);
             continue;
         }
 
@@ -357,7 +375,7 @@ static void DumpParsedFrames(List<byte> receiveBuffer, bool rssiEnabled)
     }
 }
 
-static void PrintWMBusTelegram(string timestamp, MetisFrame frame, bool rssiEnabled)
+static async Task PrintWMBusTelegramAsync(string timestamp, MetisFrame frame, bool rssiEnabled, IMqttClient mqttClient)
 {
     var payload = frame.Payload;
 
@@ -402,6 +420,32 @@ static void PrintWMBusTelegram(string timestamp, MetisFrame frame, bool rssiEnab
 
     Console.WriteLine($"  RAW({wmbus.Length}B): {ToHex(wmbus.ToArray())}");
     Console.WriteLine();
+
+    // Publish to MQTT
+    if (mqttClient.IsConnected)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            payloadHex = ToHex(wmbus.ToArray()),
+            gatewayId = "ABC123",
+            rssi = rssiDbm,
+            timestamp = DateTimeOffset.UtcNow.ToString("o")
+        });
+
+        var message = new MqttApplicationMessageBuilder()
+            .WithTopic("wmbus/raw")
+            .WithPayload(json)
+            .Build();
+
+        try
+        {
+            await mqttClient.PublishAsync(message);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  MQTT publish failed: {ex.Message}");
+        }
+    }
 }
 
 static string? DecodeMfr(ushort code)

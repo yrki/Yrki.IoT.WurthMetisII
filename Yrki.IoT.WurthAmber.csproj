@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="MQTTnet" Version="5.1.0.1559" />
     <PackageReference Include="System.IO.Ports" Version="10.0.0" />
   </ItemGroup>
 
