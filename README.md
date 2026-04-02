@@ -18,12 +18,12 @@ At the moment, the application connects to:
 
 - MQTT broker: `localhost`
 - Port: `1883`
-- Topic: `wmbus/raw`
+- Topic: `wmbus/raw` (configurable via `--topic`)
 
 The JSON message contains:
 
 - `payloadHex`: the Wireless M-Bus payload as a hex string
-- `gatewayId`: currently hardcoded to `ABC123`
+- `gatewayId`: the machine's hostname (`Environment.MachineName`)
 - `rssi`: RSSI in dBm if the Metis device provides RSSI
 - `timestamp`: UTC timestamp in ISO 8601 format
 
@@ -32,7 +32,7 @@ Example:
 ```json
 {
   "payloadHex": "4409070556150008167A4D0030056FD9B0923064340B838E88CFAFB6BB890C691133A958CD40268BA482FAA542B6499432C8FE81E45AD0282350EBE79D6A",
-  "gatewayId": "ABC123",
+  "gatewayId": "raspberrypi",
   "rssi": -87,
   "timestamp": "2026-04-02T09:15:30.1234567+00:00"
 }
@@ -70,6 +70,7 @@ This uses the default values:
 - port: `/dev/cu.usbserial-53002FA7`
 - baud: `9600`
 - log file: `payloads.log`
+- topic: `wmbus/raw`
 
 ## Command-line arguments
 
@@ -90,6 +91,9 @@ The application supports the following arguments:
 - `--log-file <file-path>`
   Set the payload log file path.
 
+- `--topic <topic>`
+  Set the MQTT topic to publish to.
+
 - `--help`
   Show usage information.
 
@@ -99,7 +103,7 @@ The application supports the following arguments:
 ## Usage syntax
 
 ```bash
-dotnet run --project Yrki.IoT.WurthMetisII.csproj -- [--port <port>] [--baud <baudrate>] [--activate] [--dump-params] [--log-file <file>]
+dotnet run --project Yrki.IoT.WurthMetisII.csproj -- [--port <port>] [--baud <baudrate>] [--activate] [--dump-params] [--log-file <file>] [--topic <topic>]
 ```
 
 ## Common examples
@@ -188,6 +192,9 @@ The project is split by functionality under `Features/`:
 
 - `Features/MetisProtocol`
   Building and parsing Metis frames.
+
+- `Features/Gateway`
+  Gateway identity for this device.
 
 - `Features/Activation`
   Metis-II setup and activation.

@@ -39,7 +39,7 @@ internal sealed class TelegramListenerService(
                 var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
                 logger.LogDebug("[{Timestamp}] PAYLOAD: {Hex}", timestamp, Convert.ToHexString(chunk));
                 metisBuffer.AddRange(chunk.ToArray());
-                await DumpParsedFramesAsync(metisBuffer, rssiEnabled, cancellationToken);
+                await DumpParsedFramesAsync(metisBuffer, rssiEnabled, options.MqttTopic, cancellationToken);
             }
             catch (IOException)
             {
@@ -72,7 +72,7 @@ internal sealed class TelegramListenerService(
         }
     }
 
-    private async Task DumpParsedFramesAsync(List<byte> receiveBuffer, bool rssiEnabled, CancellationToken cancellationToken)
+    private async Task DumpParsedFramesAsync(List<byte> receiveBuffer, bool rssiEnabled, string topic, CancellationToken cancellationToken)
     {
         while (metisProtocolService.TryExtractMetisFrame(receiveBuffer, out var frame))
         {
@@ -80,7 +80,7 @@ internal sealed class TelegramListenerService(
 
             if (frame.Command == 0x03)
             {
-                var payload = telegramParserService.ParseAndPrint(timestamp, frame, rssiEnabled);
+                var payload = telegramParserService.ParseAndPrint(timestamp, frame, rssiEnabled, topic);
                 if (payload is not null)
                 {
                     await sendToServer.SendAsync(payload, cancellationToken);

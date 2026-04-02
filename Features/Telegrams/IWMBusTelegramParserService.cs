@@ -5,5 +5,5 @@ namespace Yrki.IoT.WurthMetisII.Features.Telegrams;
 
 internal interface IWMBusTelegramParserService
 {
-    ServerPayload? ParseAndPrint(string timestamp, MetisFrame frame, bool rssiEnabled);
+    ServerPayload? ParseAndPrint(string timestamp, MetisFrame frame, bool rssiEnabled, string topic);
 }

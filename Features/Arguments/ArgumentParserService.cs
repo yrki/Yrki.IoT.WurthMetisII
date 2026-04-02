@@ -10,6 +10,7 @@ internal sealed class ArgumentParserService(ILogger<ArgumentParserService> logge
         var baudRate = 9600;
         var activate = false;
         var logFilePath = "payloads.log";
+        var mqttTopic = "wmbus/raw";
         var dumpParameters = false;
         var showHelp = false;
 
@@ -30,6 +31,9 @@ internal sealed class ArgumentParserService(ILogger<ArgumentParserService> logge
                 case "--log-file" when i + 1 < args.Length:
                     logFilePath = args[++i];
                     break;
+                case "--topic" when i + 1 < args.Length:
+                    mqttTopic = args[++i];
+                    break;
                 case "--dump-params":
                     dumpParameters = true;
                     break;
@@ -40,11 +44,11 @@ internal sealed class ArgumentParserService(ILogger<ArgumentParserService> logge
             }
         }
 
-        return new RuntimeOptions(portName, baudRate, activate, logFilePath, dumpParameters, showHelp);
+        return new RuntimeOptions(portName, baudRate, activate, logFilePath, mqttTopic, dumpParameters, showHelp);
     }
 
     public void PrintUsage()
     {
-        logger.LogInformation("Usage: dotnet run -- [--port /dev/cu.usbserial-53002FA7] [--baud 9600] [--activate] [--dump-params] [--log-file payloads.log]");
+        logger.LogInformation("Usage: dotnet run -- [--port /dev/cu.usbserial-53002FA7] [--baud 9600] [--activate] [--dump-params] [--log-file payloads.log] [--topic wmbus/raw]");
     }
 }

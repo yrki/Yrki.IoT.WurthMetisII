@@ -9,7 +9,7 @@ internal sealed class WMBusTelegramParserService(
     ILogger<WMBusTelegramParserService> logger,
     IGatewayIdService gatewayIdService) : IWMBusTelegramParserService
 {
-    public ServerPayload? ParseAndPrint(string timestamp, MetisFrame frame, bool rssiEnabled)
+    public ServerPayload? ParseAndPrint(string timestamp, MetisFrame frame, bool rssiEnabled, string topic)
     {
         var payload = frame.Payload;
         if (payload.Length < 11)
@@ -65,7 +65,7 @@ internal sealed class WMBusTelegramParserService(
             gatewayIdService.GetGatewayId(),
             rssiDbm,
             DateTimeOffset.UtcNow,
-            "wmbus/raw");
+            topic);
     }
 
     private static string? DecodeManufacturer(ushort code)

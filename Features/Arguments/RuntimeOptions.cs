@@ -5,5 +5,6 @@ internal sealed record RuntimeOptions(
     int BaudRate,
     bool Activate,
     string LogFilePath,
+    string MqttTopic,
     bool DumpParameters,
     bool ShowHelp);
