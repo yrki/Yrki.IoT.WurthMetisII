@@ -25,5 +25,4 @@ internal interface IMetisProtocolService
         byte[] command,
         int pauseMs);
     bool TryExtractMetisFrame(List<byte> receiveBuffer, out MetisFrame frame);
-    string ToHex(ReadOnlySpan<byte> data);
 }

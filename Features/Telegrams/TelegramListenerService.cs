@@ -37,7 +37,7 @@ internal sealed class TelegramListenerService(
 
                 var chunk = chunkBuffer.AsSpan(0, bytesRead);
                 var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
-                logger.LogDebug("[{Timestamp}] PAYLOAD: {Hex}", timestamp, metisProtocolService.ToHex(chunk));
+                logger.LogDebug("[{Timestamp}] PAYLOAD: {Hex}", timestamp, Convert.ToHexString(chunk));
                 metisBuffer.AddRange(chunk.ToArray());
                 await DumpParsedFramesAsync(metisBuffer, rssiEnabled, cancellationToken);
             }
@@ -89,7 +89,7 @@ internal sealed class TelegramListenerService(
                 continue;
             }
 
-            logger.LogInformation("[{Timestamp}] METIS CMD=0x{Command:X2} LEN={Length} HEX={Hex}", timestamp, frame.Command, frame.Payload.Length, metisProtocolService.ToHex(frame.RawFrame));
+            logger.LogInformation("[{Timestamp}] METIS CMD=0x{Command:X2} LEN={Length} HEX={Hex}", timestamp, frame.Command, frame.Payload.Length, Convert.ToHexString(frame.RawFrame));
         }
     }
 }

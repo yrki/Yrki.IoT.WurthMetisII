@@ -3,7 +3,6 @@ using Yrki.IoT.WurthMetisII.Features.Activation;
 using Yrki.IoT.WurthMetisII.Features.Arguments;
 using Yrki.IoT.WurthMetisII.Features.Logging;
 using Yrki.IoT.WurthMetisII.Features.Parameters;
-using Yrki.IoT.WurthMetisII.Features.Serial;
 using Yrki.IoT.WurthMetisII.Features.ServerTransport;
 using Yrki.IoT.WurthMetisII.Features.Telegrams;
 
@@ -13,7 +12,6 @@ internal sealed class ApplicationService(
     ILogger<ApplicationService> logger,
     IArgumentParserService argumentParser,
     IPayloadLogService payloadLogService,
-    ISerialPortService serialPortService,
     IActivationService activationService,
     IParameterDumpService parameterDumpService,
     ISendToServer sendToServer,
@@ -31,7 +29,6 @@ internal sealed class ApplicationService(
         payloadLogService.Initialize(options.LogFilePath);
 
         logger.LogInformation("Opening {PortName} at {BaudRate} baud", options.PortName, options.BaudRate);
-        serialPortService.ConfigurePort(options.PortName, options.BaudRate);
 
         if (options.Activate)
         {

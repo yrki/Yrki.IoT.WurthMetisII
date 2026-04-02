@@ -36,11 +36,11 @@ internal sealed class ParameterDumpService(
                     var payloadLength = response.Payload[1];
                     var values = response.Payload.AsSpan(2);
                     var dec = string.Join(", ", values.ToArray().Select(v => v.ToString()));
-                    logger.LogInformation("[0x{Param:X2}] len={PayloadLength} hex={Hex} dec={DecimalValues}", param, payloadLength, metisProtocolService.ToHex(values), dec);
+                    logger.LogInformation("[0x{Param:X2}] len={PayloadLength} hex={Hex} dec={DecimalValues}", param, payloadLength, Convert.ToHexString(values), dec);
                 }
                 else
                 {
-                    logger.LogInformation("[0x{Param:X2}] raw={Raw}", param, metisProtocolService.ToHex(response.Payload));
+                    logger.LogInformation("[0x{Param:X2}] raw={Raw}", param, Convert.ToHexString(response.Payload));
                 }
             }
             catch (TimeoutException)

@@ -35,7 +35,7 @@ internal sealed class MetisProtocolService(ILogger<MetisProtocolService> logger)
 
         for (var attempt = 1; attempt <= attempts; attempt++)
         {
-            logger.LogInformation("TX {Label} attempt {Attempt}/{Attempts}: {Hex}", label, attempt, attempts, ToHex(command));
+            logger.LogInformation("TX {Label} attempt {Attempt}/{Attempts}: {Hex}", label, attempt, attempts, Convert.ToHexString(command));
             serialStream.Write(command, 0, command.Length);
             serialStream.Flush();
 
@@ -43,7 +43,7 @@ internal sealed class MetisProtocolService(ILogger<MetisProtocolService> logger)
             {
                 var response = WaitForFrame(serialStream, receiveBuffer, expectedCommand, timeoutMs);
                 var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
-                logger.LogInformation("[{Timestamp}] METIS CMD=0x{Command:X2} HEX={Hex}", timestamp, response.Command, ToHex(response.RawFrame));
+                logger.LogInformation("[{Timestamp}] METIS CMD=0x{Command:X2} HEX={Hex}", timestamp, response.Command, Convert.ToHexString(response.RawFrame));
                 if (response.Payload.Length > 0 && response.Payload[0] != 0x00)
                 {
                     throw new IOException($"{label} failed with status 0x{response.Payload[0]:X2}");
@@ -71,7 +71,7 @@ internal sealed class MetisProtocolService(ILogger<MetisProtocolService> logger)
         byte expectedCommand,
         int timeoutMs = 1500)
     {
-        logger.LogInformation("TX {Label}: {Hex}", label, ToHex(command));
+        logger.LogInformation("TX {Label}: {Hex}", label, Convert.ToHexString(command));
         serialStream.Write(command, 0, command.Length);
         serialStream.Flush();
         return WaitForFrame(serialStream, receiveBuffer, expectedCommand, timeoutMs);
@@ -84,7 +84,7 @@ internal sealed class MetisProtocolService(ILogger<MetisProtocolService> logger)
         byte[] command,
         int pauseMs)
     {
-        logger.LogInformation("TX {Label}: {Hex}", label, ToHex(command));
+        logger.LogInformation("TX {Label}: {Hex}", label, Convert.ToHexString(command));
         serialStream.Write(command, 0, command.Length);
         serialStream.Flush();
         DrainDuringPause(serialStream, receiveBuffer, pauseMs);
@@ -135,11 +135,6 @@ internal sealed class MetisProtocolService(ILogger<MetisProtocolService> logger)
         return false;
     }
 
-    public string ToHex(ReadOnlySpan<byte> data)
-    {
-        return Convert.ToHexString(data);
-    }
-
     private MetisFrame WaitForFrame(FileStream serialStream, List<byte> receiveBuffer, byte expectedCommand, int timeoutMs)
     {
         var startedAt = Environment.TickCount64;
@@ -156,12 +151,12 @@ internal sealed class MetisProtocolService(ILogger<MetisProtocolService> logger)
 
             var chunk = buffer.AsSpan(0, bytesRead);
             var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
-            logger.LogDebug("[{Timestamp}] PAYLOAD: {Hex}", timestamp, ToHex(chunk));
+            logger.LogDebug("[{Timestamp}] PAYLOAD: {Hex}", timestamp, Convert.ToHexString(chunk));
             receiveBuffer.AddRange(chunk.ToArray());
 
             while (TryExtractMetisFrame(receiveBuffer, out var frame))
             {
-                logger.LogInformation("[{Timestamp}] METIS CMD=0x{Command:X2} LEN={Length} HEX={Hex}", timestamp, frame.Command, frame.Payload.Length, ToHex(frame.RawFrame));
+                logger.LogInformation("[{Timestamp}] METIS CMD=0x{Command:X2} LEN={Length} HEX={Hex}", timestamp, frame.Command, frame.Payload.Length, Convert.ToHexString(frame.RawFrame));
                 if (frame.Command == expectedCommand)
                 {
                     return frame;
@@ -188,12 +183,12 @@ internal sealed class MetisProtocolService(ILogger<MetisProtocolService> logger)
 
             var chunk = buffer.AsSpan(0, bytesRead);
             var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
-            logger.LogDebug("[{Timestamp}] PAYLOAD: {Hex}", timestamp, ToHex(chunk));
+            logger.LogDebug("[{Timestamp}] PAYLOAD: {Hex}", timestamp, Convert.ToHexString(chunk));
             receiveBuffer.AddRange(chunk.ToArray());
 
             while (TryExtractMetisFrame(receiveBuffer, out var frame))
             {
-                logger.LogInformation("[{Timestamp}] METIS CMD=0x{Command:X2} LEN={Length} HEX={Hex}", timestamp, frame.Command, frame.Payload.Length, ToHex(frame.RawFrame));
+                logger.LogInformation("[{Timestamp}] METIS CMD=0x{Command:X2} LEN={Length} HEX={Hex}", timestamp, frame.Command, frame.Payload.Length, Convert.ToHexString(frame.RawFrame));
             }
         }
     }
