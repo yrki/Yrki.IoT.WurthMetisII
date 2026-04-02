@@ -41,7 +41,7 @@ internal sealed class ApplicationService(
             return 0;
         }
 
-        await sendToServer.StartAsync(cancellationToken);
+        await sendToServer.StartAsync(options, cancellationToken);
         await telegramListenerService.ListenAsync(options, cancellationToken);
         return 0;
     }

@@ -1,5 +1,6 @@
 using MQTTnet;
 using Microsoft.Extensions.Logging;
+using Yrki.IoT.WurthMetisII.Features.Arguments;
 using Yrki.IoT.WurthMetisII.Features.Logging;
 
 namespace Yrki.IoT.WurthMetisII.Features.ServerTransport;
@@ -9,14 +10,17 @@ internal sealed class SendToServerWithMqttService(
     IPayloadLogService payloadLogService) : ISendToServer, IAsyncDisposable
 {
     private readonly IMqttClient _mqttClient = new MqttClientFactory().CreateMqttClient();
-    private readonly MqttClientOptions _mqttOptions = new MqttClientOptionsBuilder()
-        .WithTcpServer("localhost", 1883)
-        .Build();
-
+    private MqttClientOptions? _mqttOptions;
+    private string _brokerDescription = "";
     private DateTimeOffset _nextReconnectAttemptUtc = DateTimeOffset.MinValue;
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    public async Task StartAsync(RuntimeOptions options, CancellationToken cancellationToken)
     {
+        _brokerDescription = $"{options.MqttHost}:{options.MqttPort}";
+        _mqttOptions = new MqttClientOptionsBuilder()
+            .WithTcpServer(options.MqttHost, options.MqttPort)
+            .Build();
+
         await EnsureConnectedAsync("connected", cancellationToken);
     }
 
@@ -69,7 +73,7 @@ internal sealed class SendToServerWithMqttService(
             return true;
         }
 
-        if (DateTimeOffset.UtcNow < _nextReconnectAttemptUtc)
+        if (_mqttOptions is null || DateTimeOffset.UtcNow < _nextReconnectAttemptUtc)
         {
             return false;
         }
@@ -77,13 +81,13 @@ internal sealed class SendToServerWithMqttService(
         try
         {
             await _mqttClient.ConnectAsync(_mqttOptions, cancellationToken);
-            logger.LogInformation("MQTT {SuccessVerb} to localhost:1883", successVerb);
+            logger.LogInformation("MQTT {SuccessVerb} to {Broker}", successVerb, _brokerDescription);
             _nextReconnectAttemptUtc = DateTimeOffset.UtcNow.AddSeconds(5);
             return true;
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "MQTT connection failed");
+            logger.LogWarning(ex, "MQTT connection to {Broker} failed", _brokerDescription);
             logger.LogInformation("Continuing without MQTT");
             _nextReconnectAttemptUtc = DateTimeOffset.UtcNow.AddSeconds(5);
             return false;

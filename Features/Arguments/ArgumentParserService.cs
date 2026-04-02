@@ -10,6 +10,8 @@ internal sealed class ArgumentParserService(ILogger<ArgumentParserService> logge
         var baudRate = 9600;
         var activate = false;
         var logFilePath = "payloads.log";
+        var mqttHost = "localhost";
+        var mqttPort = 1883;
         var mqttTopic = "wmbus/raw";
         var dumpParameters = false;
         var showHelp = false;
@@ -31,6 +33,13 @@ internal sealed class ArgumentParserService(ILogger<ArgumentParserService> logge
                 case "--log-file" when i + 1 < args.Length:
                     logFilePath = args[++i];
                     break;
+                case "--mqtt-host" when i + 1 < args.Length:
+                    mqttHost = args[++i];
+                    break;
+                case "--mqtt-port" when i + 1 < args.Length && int.TryParse(args[i + 1], out var parsedMqttPort):
+                    mqttPort = parsedMqttPort;
+                    i++;
+                    break;
                 case "--topic" when i + 1 < args.Length:
                     mqttTopic = args[++i];
                     break;
@@ -44,11 +53,11 @@ internal sealed class ArgumentParserService(ILogger<ArgumentParserService> logge
             }
         }
 
-        return new RuntimeOptions(portName, baudRate, activate, logFilePath, mqttTopic, dumpParameters, showHelp);
+        return new RuntimeOptions(portName, baudRate, activate, logFilePath, mqttHost, mqttPort, mqttTopic, dumpParameters, showHelp);
     }
 
     public void PrintUsage()
     {
-        logger.LogInformation("Usage: dotnet run -- [--port /dev/cu.usbserial-53002FA7] [--baud 9600] [--activate] [--dump-params] [--log-file payloads.log] [--topic wmbus/raw]");
+        logger.LogInformation("Usage: dotnet run -- [--port /dev/cu.usbserial-53002FA7] [--baud 9600] [--activate] [--dump-params] [--log-file payloads.log] [--mqtt-host localhost] [--mqtt-port 1883] [--topic wmbus/raw]");
     }
 }
