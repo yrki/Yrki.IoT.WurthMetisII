@@ -53,3 +53,5 @@ TestResults/
 *.trx
 
 *.log
+
+publish/
