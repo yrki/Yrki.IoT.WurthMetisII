@@ -7,8 +7,7 @@ The application is a small .NET console app that does the following:
 1. Opens and configures the serial port connected to a Wurth Metis-II.
 2. Reads raw Metis frames from the device.
 3. Parses Wireless M-Bus telegrams.
-4. Logs payloads locally to a file.
-5. Publishes the telegrams to MQTT as JSON.
+4. Publishes the telegrams to MQTT as JSON.
 
 ## What is sent to MQTT
 
@@ -69,7 +68,6 @@ This uses the default values:
 
 - port: `/dev/cu.usbserial-53002FA7`
 - baud: `9600`
-- log file: `payloads.log`
 - gateway ID: hostname
 - MQTT host: `localhost`
 - MQTT port: `1883`
@@ -90,9 +88,6 @@ The application supports the following arguments:
 
 - `--dump-params`
   Read parameters from the Metis-II and exit afterwards.
-
-- `--log-file <file-path>`
-  Set the payload log file path.
 
 - `--gateway-id <name>`
   Set the gateway identifier. Defaults to the machine's hostname.
@@ -115,7 +110,7 @@ The application supports the following arguments:
 ## Usage syntax
 
 ```bash
-dotnet run --project Yrki.IoT.WurthMetisII.csproj -- [--port <port>] [--baud <baudrate>] [--activate] [--dump-params] [--log-file <file>] [--gateway-id <name>] [--mqtt-host <host>] [--mqtt-port <port>] [--topic <topic>]
+dotnet run --project Yrki.IoT.WurthMetisII.csproj -- [--port <port>] [--baud <baudrate>] [--activate] [--dump-params] [--gateway-id <name>] [--mqtt-host <host>] [--mqtt-port <port>] [--topic <topic>]
 ```
 
 ## Common examples
@@ -150,12 +145,6 @@ Read parameters and exit:
 dotnet run --project Yrki.IoT.WurthMetisII.csproj -- --port /dev/cu.usbserial-53002FA7 --dump-params
 ```
 
-Write payload logs to a different file:
-
-```bash
-dotnet run --project Yrki.IoT.WurthMetisII.csproj -- --log-file logs/payloads.log
-```
-
 Show help:
 
 ```bash
@@ -167,27 +156,18 @@ dotnet run --project Yrki.IoT.WurthMetisII.csproj -- --help
 During normal startup, the application does the following:
 
 1. Reads command-line arguments.
-2. Creates the payload log file.
-3. Configures the serial port.
-4. Activates the Metis-II if `--activate` is specified.
-5. Tries to read the RSSI configuration from the device.
-6. Connects to the MQTT broker.
-7. Starts continuously listening for Wireless M-Bus telegrams.
-8. Logs and publishes incoming telegrams.
+2. Configures the serial port.
+3. Activates the Metis-II if `--activate` is specified.
+4. Tries to read the RSSI configuration from the device.
+5. Connects to the MQTT broker.
+6. Starts continuously listening for Wireless M-Bus telegrams.
+7. Logs and publishes incoming telegrams.
 
 If MQTT is not available at startup, the application continues reading from the serial port and retries the MQTT connection later.
 
 ## Logging
 
-The application uses `ILogger` with console logging.
-
-In addition, `payloadHex` is written to a local log file, which by default is:
-
-```text
-payloads.log
-```
-
-Note that this file is currently written when the application attempts to forward a payload, not only when MQTT publishing has definitely succeeded.
+The application uses `ILogger` with console logging only.
 
 ## Architecture
 

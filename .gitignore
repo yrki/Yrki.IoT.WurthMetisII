@@ -55,3 +55,6 @@ TestResults/
 *.log
 
 publish/
+
+
+build-native/

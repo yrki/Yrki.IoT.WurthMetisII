@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Yrki.IoT.WurthMetisII.Features.Activation;
 using Yrki.IoT.WurthMetisII.Features.Arguments;
-using Yrki.IoT.WurthMetisII.Features.Logging;
 using Yrki.IoT.WurthMetisII.Features.Parameters;
 using Yrki.IoT.WurthMetisII.Features.ServerTransport;
 using Yrki.IoT.WurthMetisII.Features.Telegrams;
@@ -11,7 +10,6 @@ namespace Yrki.IoT.WurthMetisII.Features.Application;
 internal sealed class ApplicationService(
     ILogger<ApplicationService> logger,
     IArgumentParserService argumentParser,
-    IPayloadLogService payloadLogService,
     IActivationService activationService,
     IParameterDumpService parameterDumpService,
     ISendToServer sendToServer,
@@ -25,8 +23,6 @@ internal sealed class ApplicationService(
             argumentParser.PrintUsage();
             return 0;
         }
-
-        payloadLogService.Initialize(options.LogFilePath);
 
         logger.LogInformation("Opening {PortName} at {BaudRate} baud", options.PortName, options.BaudRate);
 

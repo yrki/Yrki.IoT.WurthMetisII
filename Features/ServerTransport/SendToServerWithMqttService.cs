@@ -1,13 +1,11 @@
 using MQTTnet;
 using Microsoft.Extensions.Logging;
 using Yrki.IoT.WurthMetisII.Features.Arguments;
-using Yrki.IoT.WurthMetisII.Features.Logging;
 
 namespace Yrki.IoT.WurthMetisII.Features.ServerTransport;
 
 internal sealed class SendToServerWithMqttService(
-    ILogger<SendToServerWithMqttService> logger,
-    IPayloadLogService payloadLogService) : ISendToServer, IAsyncDisposable
+    ILogger<SendToServerWithMqttService> logger) : ISendToServer, IAsyncDisposable
 {
     private readonly IMqttClient _mqttClient = new MqttClientFactory().CreateMqttClient();
     private MqttClientOptions? _mqttOptions;
@@ -26,8 +24,6 @@ internal sealed class SendToServerWithMqttService(
 
     public async Task SendAsync(ServerPayload payload, CancellationToken cancellationToken)
     {
-        payloadLogService.Write(payload.PayloadHex);
-
         if (!await EnsureConnectedAsync("reconnected", cancellationToken))
         {
             return;

@@ -4,7 +4,6 @@ using Microsoft.Extensions.Logging;
 using Yrki.IoT.WurthMetisII.Features.Activation;
 using Yrki.IoT.WurthMetisII.Features.Application;
 using Yrki.IoT.WurthMetisII.Features.Arguments;
-using Yrki.IoT.WurthMetisII.Features.Logging;
 using Yrki.IoT.WurthMetisII.Features.MetisProtocol;
 using Yrki.IoT.WurthMetisII.Features.Parameters;
 using Yrki.IoT.WurthMetisII.Features.Serial;
@@ -22,7 +21,6 @@ builder.Logging.AddSimpleConsole(options =>
 
 builder.Services.AddSingleton<IArgumentParserService, ArgumentParserService>();
 builder.Services.AddSingleton<IApplicationService, ApplicationService>();
-builder.Services.AddSingleton<IPayloadLogService, PayloadLogService>();
 builder.Services.AddSingleton<ISerialPortService, SerialPortService>();
 builder.Services.AddSingleton<IMetisProtocolService, MetisProtocolService>();
 builder.Services.AddSingleton<IActivationService, ActivationService>();

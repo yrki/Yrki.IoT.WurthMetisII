@@ -9,7 +9,6 @@ internal sealed class ArgumentParserService(ILogger<ArgumentParserService> logge
         var portName = "/dev/cu.usbserial-53002FA7";
         var baudRate = 9600;
         var activate = false;
-        var logFilePath = "payloads.log";
         var gatewayId = Environment.MachineName;
         var mqttHost = "localhost";
         var mqttPort = 1883;
@@ -30,9 +29,6 @@ internal sealed class ArgumentParserService(ILogger<ArgumentParserService> logge
                     break;
                 case "--activate":
                     activate = true;
-                    break;
-                case "--log-file" when i + 1 < args.Length:
-                    logFilePath = args[++i];
                     break;
                 case "--gateway-id" when i + 1 < args.Length:
                     gatewayId = args[++i];
@@ -57,11 +53,11 @@ internal sealed class ArgumentParserService(ILogger<ArgumentParserService> logge
             }
         }
 
-        return new RuntimeOptions(portName, baudRate, activate, logFilePath, gatewayId, mqttHost, mqttPort, mqttTopic, dumpParameters, showHelp);
+        return new RuntimeOptions(portName, baudRate, activate, gatewayId, mqttHost, mqttPort, mqttTopic, dumpParameters, showHelp);
     }
 
     public void PrintUsage()
     {
-        logger.LogInformation("Usage: dotnet run -- [--port /dev/cu.usbserial-53002FA7] [--baud 9600] [--activate] [--dump-params] [--log-file payloads.log] [--gateway-id <name>] [--mqtt-host localhost] [--mqtt-port 1883] [--topic wmbus/raw]");
+        logger.LogInformation("Usage: dotnet run -- [--port /dev/cu.usbserial-53002FA7] [--baud 9600] [--activate] [--dump-params] [--gateway-id <name>] [--mqtt-host localhost] [--mqtt-port 1883] [--topic wmbus/raw]");
     }
 }
