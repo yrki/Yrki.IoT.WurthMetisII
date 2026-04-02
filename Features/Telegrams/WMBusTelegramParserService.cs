@@ -1,15 +1,13 @@
 using Microsoft.Extensions.Logging;
-using Yrki.IoT.WurthMetisII.Features.Gateway;
 using Yrki.IoT.WurthMetisII.Features.MetisProtocol;
 using Yrki.IoT.WurthMetisII.Features.ServerTransport;
 
 namespace Yrki.IoT.WurthMetisII.Features.Telegrams;
 
 internal sealed class WMBusTelegramParserService(
-    ILogger<WMBusTelegramParserService> logger,
-    IGatewayIdService gatewayIdService) : IWMBusTelegramParserService
+    ILogger<WMBusTelegramParserService> logger) : IWMBusTelegramParserService
 {
-    public ServerPayload? ParseAndPrint(string timestamp, MetisFrame frame, bool rssiEnabled, string topic)
+    public ServerPayload? ParseAndPrint(string timestamp, MetisFrame frame, bool rssiEnabled, string gatewayId, string topic)
     {
         var payload = frame.Payload;
         if (payload.Length < 11)
@@ -62,7 +60,7 @@ internal sealed class WMBusTelegramParserService(
 
         return new ServerPayload(
             Convert.ToHexString(wmbus),
-            gatewayIdService.GetGatewayId(),
+            gatewayId,
             rssiDbm,
             DateTimeOffset.UtcNow,
             topic);

@@ -16,14 +16,14 @@ When a Wireless M-Bus telegram is received, the application publishes a JSON mes
 
 At the moment, the application connects to:
 
-- MQTT broker: `localhost`
-- Port: `1883`
+- MQTT broker: `localhost` (configurable via `--mqtt-host`)
+- Port: `1883` (configurable via `--mqtt-port`)
 - Topic: `wmbus/raw` (configurable via `--topic`)
 
 The JSON message contains:
 
 - `payloadHex`: the Wireless M-Bus payload as a hex string
-- `gatewayId`: the machine's hostname (`Environment.MachineName`)
+- `gatewayId`: the machine's hostname by default, or set via `--gateway-id`
 - `rssi`: RSSI in dBm if the Metis device provides RSSI
 - `timestamp`: UTC timestamp in ISO 8601 format
 
@@ -42,7 +42,7 @@ Example:
 
 - .NET 10 SDK
 - Access to the serial port connected to the Metis-II
-- An MQTT broker available on `localhost:1883`
+- An MQTT broker (default `localhost:1883`, configurable via `--mqtt-host` / `--mqtt-port`)
 - `stty` available in the environment
 
 In practice, the project is currently set up for macOS/Linux-style environments because the serial port is configured with `stty`, and the default port points to a macOS device path:
@@ -70,6 +70,9 @@ This uses the default values:
 - port: `/dev/cu.usbserial-53002FA7`
 - baud: `9600`
 - log file: `payloads.log`
+- gateway ID: hostname
+- MQTT host: `localhost`
+- MQTT port: `1883`
 - topic: `wmbus/raw`
 
 ## Command-line arguments
@@ -91,6 +94,15 @@ The application supports the following arguments:
 - `--log-file <file-path>`
   Set the payload log file path.
 
+- `--gateway-id <name>`
+  Set the gateway identifier. Defaults to the machine's hostname.
+
+- `--mqtt-host <host>`
+  Set the MQTT broker hostname.
+
+- `--mqtt-port <port>`
+  Set the MQTT broker port.
+
 - `--topic <topic>`
   Set the MQTT topic to publish to.
 
@@ -103,7 +115,7 @@ The application supports the following arguments:
 ## Usage syntax
 
 ```bash
-dotnet run --project Yrki.IoT.WurthMetisII.csproj -- [--port <port>] [--baud <baudrate>] [--activate] [--dump-params] [--log-file <file>] [--topic <topic>]
+dotnet run --project Yrki.IoT.WurthMetisII.csproj -- [--port <port>] [--baud <baudrate>] [--activate] [--dump-params] [--log-file <file>] [--gateway-id <name>] [--mqtt-host <host>] [--mqtt-port <port>] [--topic <topic>]
 ```
 
 ## Common examples
@@ -159,7 +171,7 @@ During normal startup, the application does the following:
 3. Configures the serial port.
 4. Activates the Metis-II if `--activate` is specified.
 5. Tries to read the RSSI configuration from the device.
-6. Connects to MQTT on `localhost:1883`.
+6. Connects to the MQTT broker.
 7. Starts continuously listening for Wireless M-Bus telegrams.
 8. Logs and publishes incoming telegrams.
 
@@ -193,9 +205,6 @@ The project is split by functionality under `Features/`:
 - `Features/MetisProtocol`
   Building and parsing Metis frames.
 
-- `Features/Gateway`
-  Gateway identity for this device.
-
 - `Features/Activation`
   Metis-II setup and activation.
 
@@ -221,6 +230,42 @@ This makes it straightforward to add more implementations later, for example:
 - `SendToServerWithRest`
 - `SendToServerWithEventHub`
 
+## Raspberry Pi deployment
+
+The `RaspberryDeployment/` folder contains scripts for building, deploying, and running the application as a systemd service on a Raspberry Pi.
+
+### Configuration
+
+Edit `RaspberryDeployment/config.env` with your settings:
+
+```env
+PI_HOST=raspberrypi.local
+PI_USER=pi
+SERIAL_PORT=/dev/ttyUSB0
+BAUD_RATE=9600
+MQTT_HOST=localhost
+MQTT_PORT=1883
+MQTT_TOPIC=wmbus/raw
+ACTIVATE=true
+# GATEWAY_ID=my-gateway       # Optional: defaults to hostname if not set
+```
+
+### Build and deploy
+
+```bash
+./RaspberryDeployment/build.sh
+./RaspberryDeployment/deploy.sh
+```
+
+`build.sh` publishes a self-contained single-file binary for `linux-arm64`. `deploy.sh` copies it to the Pi and installs a systemd service (`wmbus-gateway`) that starts automatically on boot and restarts on crash.
+
+### Monitoring
+
+```bash
+ssh pi@raspberrypi.local sudo systemctl status wmbus-gateway
+ssh pi@raspberrypi.local sudo journalctl -u wmbus-gateway -f
+```
+
 ## Stopping the application
 
 Press `Ctrl+C` to stop the application.
@@ -232,6 +277,6 @@ If you are not receiving data:
 - Check that the correct serial port is being used.
 - Check that the device responds on the selected baud rate.
 - Check that the process has permission to access the serial port.
-- Check that the MQTT broker is running on `localhost:1883`.
+- Check that the MQTT broker is running and reachable.
 - Try `--activate` if the device has not been configured yet.
 - Try `--dump-params` to verify communication with the Metis-II.

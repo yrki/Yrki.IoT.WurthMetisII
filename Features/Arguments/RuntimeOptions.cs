@@ -5,6 +5,7 @@ internal sealed record RuntimeOptions(
     int BaudRate,
     bool Activate,
     string LogFilePath,
+    string GatewayId,
     string MqttHost,
     int MqttPort,
     string MqttTopic,
