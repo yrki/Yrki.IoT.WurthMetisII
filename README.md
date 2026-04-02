@@ -234,9 +234,9 @@ This makes it straightforward to add more implementations later, for example:
 
 The `RaspberryDeployment/` folder contains scripts for building, deploying, and running the application as a systemd service on a Raspberry Pi.
 
-### Configuration
+### 1. Set defaults
 
-Edit `RaspberryDeployment/config.env` with your settings:
+Edit `RaspberryDeployment/config.env` to set default values used by the deploy script:
 
 ```env
 PI_HOST=raspberrypi.local
@@ -250,14 +250,30 @@ ACTIVATE=true
 # GATEWAY_ID=my-gateway       # Optional: defaults to hostname if not set
 ```
 
-### Build and deploy
+### 2. Build
 
 ```bash
 ./RaspberryDeployment/build.sh
+```
+
+This publishes a self-contained single-file binary for `linux-arm64`. No .NET runtime is needed on the Pi.
+
+### 3. Deploy
+
+```bash
 ./RaspberryDeployment/deploy.sh
 ```
 
-`build.sh` publishes a self-contained single-file binary for `linux-arm64`. `deploy.sh` copies it to the Pi and installs a systemd service (`wmbus-gateway`) that starts automatically on boot and restarts on crash.
+The deploy script prompts interactively for all settings, using `config.env` values as defaults:
+
+- Raspberry Pi IP/hostname, username, and password
+- Gateway ID (defaults to the Pi's hostname if left empty)
+- Serial port
+- MQTT host, port, and topic
+
+The script then copies the binary, installs a systemd service (`wmbus-gateway`), and starts it. The service starts automatically on boot and restarts on crash.
+
+Password-based SSH requires `sshpass` (`brew install sshpass`). Leave the password empty to use SSH key authentication.
 
 ### Monitoring
 
