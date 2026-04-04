@@ -11,6 +11,7 @@ public:
 
     void start(const std::string& host, int port);
     void send(const ServerPayload& payload);
+    void mark_disconnected();
 
 private:
     bool ensure_connected(const char* verb);

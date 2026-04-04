@@ -13,14 +13,11 @@ internal sealed class TelegramListenerService(
     IWMBusTelegramParserService telegramParserService,
     ISendToServer sendToServer) : ITelegramListenerService
 {
+    private static readonly TimeSpan SerialReconnectInterval = TimeSpan.FromSeconds(30);
+
     public async Task ListenAsync(RuntimeOptions options, CancellationToken cancellationToken)
     {
-        serialPortService.ConfigurePort(options.PortName, options.BaudRate);
-        using var serialStream = serialPortService.OpenStream(options.PortName);
-
-        var rssiEnabled = TryReadRssiEnabled(serialStream);
         var chunkBuffer = new byte[4096];
-        var metisBuffer = new List<byte>(8192);
 
         logger.LogInformation("Listening for WMBus telegrams. Press Ctrl+C to stop.");
 
@@ -28,22 +25,34 @@ internal sealed class TelegramListenerService(
         {
             try
             {
-                var bytesRead = serialStream.Read(chunkBuffer, 0, chunkBuffer.Length);
-                if (bytesRead <= 0)
-                {
-                    await Task.Delay(25, cancellationToken);
-                    continue;
-                }
+                serialPortService.ConfigurePort(options.PortName, options.BaudRate);
+                using var serialStream = serialPortService.OpenStream(options.PortName);
+                logger.LogInformation("Serial connected to {PortName} at {BaudRate} baud", options.PortName, options.BaudRate);
 
-                var chunk = chunkBuffer.AsSpan(0, bytesRead);
-                var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
-                logger.LogDebug("[{Timestamp}] PAYLOAD: {Hex}", timestamp, Convert.ToHexString(chunk));
-                metisBuffer.AddRange(chunk.ToArray());
-                await DumpParsedFramesAsync(metisBuffer, rssiEnabled, options.GatewayId, options.MqttTopic, cancellationToken);
+                var rssiEnabled = TryReadRssiEnabled(serialStream);
+                var metisBuffer = new List<byte>(8192);
+
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    var bytesRead = serialStream.Read(chunkBuffer, 0, chunkBuffer.Length);
+                    if (bytesRead <= 0)
+                    {
+                        await Task.Delay(25, cancellationToken);
+                        continue;
+                    }
+
+                    var chunk = chunkBuffer.AsSpan(0, bytesRead);
+                    var timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
+                    logger.LogDebug("[{Timestamp}] PAYLOAD: {Hex}", timestamp, Convert.ToHexString(chunk));
+                    metisBuffer.AddRange(chunk.ToArray());
+                    await DumpParsedFramesAsync(metisBuffer, rssiEnabled, options.GatewayId, options.MqttTopic, cancellationToken);
+                }
             }
-            catch (IOException)
+            catch (IOException ex) when (!cancellationToken.IsCancellationRequested)
             {
-                await Task.Delay(25, cancellationToken);
+                logger.LogWarning(ex, "Serial connection to {PortName} lost", options.PortName);
+                logger.LogInformation("Retrying serial connection in 30 seconds");
+                await Task.Delay(SerialReconnectInterval, cancellationToken);
             }
         }
     }

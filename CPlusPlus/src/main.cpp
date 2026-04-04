@@ -7,15 +7,25 @@
 #include "wmbus_parser.h"
 
 #include <atomic>
+#include <cerrno>
 #include <csignal>
 #include <cstring>
+#include <stdexcept>
 #include <thread>
 #include <unistd.h>
 
 static std::atomic<bool> g_running{true};
+namespace {
+constexpr int64_t serial_retry_interval_ms = 30000;
+}
 
 static void signal_handler(int) {
     g_running = false;
+}
+
+static int64_t now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 static void activate(const RuntimeOptions& opts) {
@@ -100,42 +110,72 @@ static bool try_read_rssi_enabled(int fd) {
 }
 
 static void listen_loop(const RuntimeOptions& opts, MqttClient& mqtt) {
-    int fd = serial_open(opts.port_name, opts.baud_rate);
-    bool rssi_enabled = try_read_rssi_enabled(fd);
-
     uint8_t chunk_buf[4096];
-    std::vector<uint8_t> metis_buffer;
-    metis_buffer.reserve(8192);
+    int64_t next_serial_reconnect_ms = 0;
 
     LOG_INFO("Listening for WMBus telegrams. Press Ctrl+C to stop.");
 
     while (g_running) {
-        ssize_t n = read(fd, chunk_buf, sizeof(chunk_buf));
-        if (n <= 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        if (now_ms() < next_serial_reconnect_ms) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
             continue;
         }
 
-        LOG_DEBUG("PAYLOAD: %s", to_hex(chunk_buf, n).c_str());
-        metis_buffer.insert(metis_buffer.end(), chunk_buf, chunk_buf + n);
+        int fd = -1;
+        try {
+            fd = serial_open(opts.port_name, opts.baud_rate);
+            LOG_INFO("Serial connected to %s at %d baud", opts.port_name.c_str(), opts.baud_rate);
+        } catch (const std::runtime_error& ex) {
+            LOG_WARN("Serial connection to %s failed: %s", opts.port_name.c_str(), ex.what());
+            LOG_INFO("Retrying serial connection in 30 seconds");
+            next_serial_reconnect_ms = now_ms() + serial_retry_interval_ms;
+            continue;
+        }
 
-        MetisFrame frame;
-        while (metis_try_extract_frame(metis_buffer, frame)) {
-            if (frame.command == 0x03) {
-                auto payload = wmbus_parse_and_print(frame, rssi_enabled,
-                    opts.gateway_id, opts.mqtt_topic);
-                if (payload.has_value()) {
-                    mqtt.send(payload.value());
-                }
+        bool rssi_enabled = try_read_rssi_enabled(fd);
+        std::vector<uint8_t> metis_buffer;
+        metis_buffer.reserve(8192);
+
+        while (g_running) {
+            ssize_t n = read(fd, chunk_buf, sizeof(chunk_buf));
+            if (n < 0) {
+                LOG_WARN("Serial read from %s failed: %s", opts.port_name.c_str(), strerror(errno));
+                break;
+            }
+
+            if (n == 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(25));
                 continue;
             }
 
-            LOG_INFO("METIS CMD=0x%02X LEN=%zu HEX=%s",
-                frame.command, frame.payload.size(), to_hex(frame.raw_frame).c_str());
+            LOG_DEBUG("PAYLOAD: %s", to_hex(chunk_buf, n).c_str());
+            metis_buffer.insert(metis_buffer.end(), chunk_buf, chunk_buf + n);
+
+            MetisFrame frame;
+            while (metis_try_extract_frame(metis_buffer, frame)) {
+                if (frame.command == 0x03) {
+                    auto payload = wmbus_parse_and_print(frame, rssi_enabled,
+                        opts.gateway_id, opts.mqtt_topic);
+                    if (payload.has_value()) {
+                        mqtt.send(payload.value());
+                    }
+                    continue;
+                }
+
+                LOG_INFO("METIS CMD=0x%02X LEN=%zu HEX=%s",
+                    frame.command, frame.payload.size(), to_hex(frame.raw_frame).c_str());
+            }
+        }
+
+        if (fd >= 0) {
+            close(fd);
+        }
+
+        if (g_running) {
+            LOG_INFO("Retrying serial connection in 30 seconds");
+            next_serial_reconnect_ms = now_ms() + serial_retry_interval_ms;
         }
     }
-
-    close(fd);
 }
 
 int main(int argc, char* argv[]) {

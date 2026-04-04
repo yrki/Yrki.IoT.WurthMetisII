@@ -8,6 +8,33 @@
 #define HOST_NAME_MAX 255
 #endif
 
+static inline void apply_mqtt_host_arg(std::string value, std::string& host, int& port) {
+    constexpr const char* mqtt_prefix = "mqtt://";
+    if (value.rfind(mqtt_prefix, 0) != 0) {
+        host = std::move(value);
+        return;
+    }
+
+    value.erase(0, std::char_traits<char>::length(mqtt_prefix));
+
+    auto slash_pos = value.find('/');
+    if (slash_pos != std::string::npos) {
+        value.erase(slash_pos);
+    }
+
+    auto colon_pos = value.rfind(':');
+    if (colon_pos == std::string::npos) {
+        host = std::move(value);
+        return;
+    }
+
+    host = value.substr(0, colon_pos);
+    auto parsed_port = value.substr(colon_pos + 1);
+    if (!parsed_port.empty()) {
+        port = std::stoi(parsed_port);
+    }
+}
+
 struct RuntimeOptions {
 #if defined(__APPLE__)
     std::string port_name   = "/dev/cu.usbserial-53002FA7";
@@ -39,7 +66,7 @@ struct RuntimeOptions {
             else if (arg == "--baud" && i + 1 < argc)   opts.baud_rate = std::stoi(argv[++i]);
             else if (arg == "--activate")                opts.activate = true;
             else if (arg == "--gateway-id" && i + 1 < argc) opts.gateway_id = argv[++i];
-            else if (arg == "--mqtt-host" && i + 1 < argc)  opts.mqtt_host = argv[++i];
+            else if (arg == "--mqtt-host" && i + 1 < argc)  apply_mqtt_host_arg(argv[++i], opts.mqtt_host, opts.mqtt_port);
             else if (arg == "--mqtt-port" && i + 1 < argc)  opts.mqtt_port = std::stoi(argv[++i]);
             else if (arg == "--topic" && i + 1 < argc)      opts.mqtt_topic = argv[++i];
             else if (arg == "--dump-params")             opts.dump_params = true;
